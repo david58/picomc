@@ -19,18 +19,22 @@ from picomc.logging import logger
 from picomc.mod import forge
 from picomc.utils import Directory, die, sanitize_name
 
-FORGE_PREFIX = "forge-"
-ADDON_URL = "https://addons-ecs.forgesvc.net/api/v2/addon"
-GETINFO_URL = "https://addons-ecs.forgesvc.net/api/v2/addon/{}/file/{}"
-GETURL_URL = GETINFO_URL + "/download-url"
 
+FORGE_PREFIX = "forge-"
+BASE_URL = "http://api.curseforge.com/v1"
+MOD_BASE_URL = "https://edge.forgecdn.net/files/%(file_id_1)s/%(file_id_2)s/%(file_name)s"
+
+api_key = "$2a$10$NiDzXhmht.Z0XxLxnJfoS.16fEGSaTDjZrij0B2lZtL/iwUE2qUEG"
 
 def resolve_project_id(proj_id):
-    headers = {"User-Agent": "curl"}
-    resp = requests.get(f"{ADDON_URL}/{proj_id}", headers=headers)
+    headers={
+                    "X-API-Key": api_key,
+                    "Accept": "application/json"
+                }
+    resp = requests.get(f"{BASE_URL}/mods/{proj_id}/files", headers=headers)
     resp.raise_for_status()
     meta = resp.json()
-    files = meta["latestFiles"]
+    files = meta["data"]
     files.sort(key=lambda f: f["fileDate"], reverse=True)
     return files[0]["downloadUrl"]
 
@@ -131,62 +135,38 @@ def install_from_zip(zipfileobj, launcher, instance_manager, instance_name=None)
         mcdir: Path = inst.get_minecraft_dir()
         moddir = mcdir / "mods"
         with tqdm(total=modcount) as tq:
-            # Try to get as many file_infos as we can in one request
-            # This endpoint only provides a few "latest" files for each project,
-            # so it's not guaranteed that the response will contain the fileID
-            # we are looking for. It's a gamble, but usually worth it in terms
-            # of request count. The time benefit is not that great, as the endpoint
-            # is slow.
+            headers={
+                    "X-API-Key": api_key,
+                    "Accept": "application/json"
+                }
             resp = requests.post(
-                ADDON_URL, json=list(project_files.keys()), headers=headers
-            )
+                f"{BASE_URL}/mods/files", json={'fileIds': list(project_files.values())}, headers=headers)
             resp.raise_for_status()
-            projects_meta = resp.json()
-            for proj in projects_meta:
-                proj_id = proj["id"]
-                want_file = project_files[proj_id]
-                for file_info in proj["latestFiles"]:
-                    if want_file == file_info["id"]:
-                        dq.add(
-                            file_info["downloadUrl"],
-                            moddir / file_info["fileName"],
-                            size=file_info["fileLength"],
-                        )
-                        del project_files[proj_id]
+            filess_meta = resp.json()
+            for file_info in filess_meta['data']:
+                proj_id = file_info["modId"]
+                if file_info["downloadUrl"] is None:
+                    # Guess the download url
+                    file_id = file_info['id']
+                    file_id = str(file_id)[1:] if str(file_id).startswith("0") else str(file_id)
+                    file_id_1 = file_id[:4]
+                    file_id_2 = file_id[4:7]
+                    file_info["downloadUrl"] = MOD_BASE_URL % {
+                        "file_id_1": file_id_1,
+                        "file_id_2": file_id_2,
+                        "file_name": file_info["fileName"]
+                    }
+
+                dq.add(
+                    file_info["downloadUrl"],
+                    moddir / file_info["fileName"],
+                    size=file_info["fileLength"],
+                )
+
 
             batch_recvd = modcount - len(project_files)
             logger.debug("Got {} batched".format(batch_recvd))
             tq.update(batch_recvd)
-
-            with ThreadPoolExecutor(max_workers=16) as tpe:
-
-                def dl(pid, fid):
-                    resp = requests.get(GETINFO_URL.format(pid, fid), headers=headers)
-                    resp.raise_for_status()
-                    file_info = resp.json()
-                    assert file_info["id"] == fid
-                    dq.add(
-                        file_info["downloadUrl"],
-                        moddir / file_info["fileName"],
-                        size=file_info["fileLength"],
-                    )
-
-                # Get remaining individually
-                futmap = {}
-                for pid, fid in project_files.items():
-                    fut = tpe.submit(dl, pid, fid)
-                    futmap[fut] = (pid, fid)
-
-                for fut in concurrent.futures.as_completed(futmap.keys()):
-                    try:
-                        fut.result()
-                    except Exception as ex:
-                        pid, fid = futmap[fut]
-                        logger.error(
-                            "Could not get metadata for {}/{}: {}".format(pid, fid, ex)
-                        )
-                    else:
-                        tq.update(1)
 
         logger.info("Downloading mod jars")
         dq.download()
