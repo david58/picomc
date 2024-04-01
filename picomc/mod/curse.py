@@ -26,7 +26,7 @@ MOD_BASE_URL = "https://edge.forgecdn.net/files/%(file_id_1)s/%(file_id_2)s/%(fi
 
 api_key = "$2a$10$NiDzXhmht.Z0XxLxnJfoS.16fEGSaTDjZrij0B2lZtL/iwUE2qUEG"
 
-def resolve_project_id(proj_id):
+def resolve_project_id(proj_id, modpack_version=None):
     headers={
                     "X-API-Key": api_key,
                     "Accept": "application/json"
@@ -34,8 +34,16 @@ def resolve_project_id(proj_id):
     resp = requests.get(f"{BASE_URL}/mods/{proj_id}/files", headers=headers)
     resp.raise_for_status()
     meta = resp.json()
-    files = meta["data"]
-    files.sort(key=lambda f: f["fileDate"], reverse=True)
+    all_files = meta["data"]
+    all_files.sort(key=lambda f: f["fileDate"], reverse=True)
+    files = all_files
+    if modpack_version:
+        files = list(filter(lambda f: f['displayName'].find(modpack_version)!=-1, all_files))
+        if not files:
+            versions = "\n".join(list(map(lambda f: f['displayName'],all_files)))
+            print(f"Version {modpack_version} not found. List of available versions:\n{versions}")
+            exit(0)
+
     return files[0]["downloadUrl"]
 
 
@@ -189,9 +197,9 @@ def install_from_zip(zipfileobj, launcher, instance_manager, instance_name=None)
         logger.info("Done installing {}".format(instance_name))
 
 
-def install_from_path(path, launcher, instance_manager, instance_name=None):
+def install_from_path(path, launcher, instance_manager, instance_name=None, modpack_version=None):
     if path.isascii() and path.isdecimal():
-        path = resolve_project_id(path)
+        path = resolve_project_id(path, modpack_version)
     elif os.path.exists(path):
         if path.endswith(".ccip"):
             path = resolve_ccip(path)
@@ -219,9 +227,10 @@ def curse_cli():
 @curse_cli.command("install")
 @click.argument("path")
 @click.option("--name", "-n", default=None, help="Name of the resulting instance")
+@click.option("--version", "-v", default=None, help="Version of the modpack")
 @pass_instance_manager
 @pass_launcher
-def install_cli(launcher, im, path, name):
+def install_cli(launcher, im, path, name, version):
     """Install a modpack.
 
     An instance is created with the correct version of forge selected and all
@@ -230,7 +239,7 @@ def install_cli(launcher, im, path, name):
     PATH can be a URL of the modpack (either twitch:// or https://
     containing a numeric identifier of the file), a path to either a downloaded
     curse zip file or a ccip file or the project ID."""
-    install_from_path(path, launcher, im, name)
+    install_from_path(path, launcher, im, name, version)
 
 
 def register_cli(root):
