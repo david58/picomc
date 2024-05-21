@@ -49,8 +49,8 @@ FORGE_WRAPPER_NEW = {
         "name": "net.cavoj:PicoForgeWrapper:1.5",
         "downloads": {
             "artifact": {
-                "url": "https://drive.google.com/uc?export=download&id=1vAlustd4ni2_J6bUxoAdt1o6_yUptM0r",
-                "sha1": "4bbb493988c6c8961503fe7619313bb136c58213",
+                "url": "https://storage.googleapis.com/picomc-forgewrapper/PicoForgeWrapper-1.5.jar",
+                "sha1": "c31e7cbb682e9329be35b12b12f76c9ee23c2916",
                 "size": 7573,
             }
         },
@@ -234,7 +234,7 @@ def install_113(ctx: ForgeInstallContext):
 
     if is_wrapper_new:
         logger.debug("Using new PicoForgeWrapper")
-        if not "jvm" in vspec["arguments"]:
+        if "jvm" not in vspec["arguments"]:
             vspec["arguments"]["jvm"] = list()
         vspec["arguments"]["jvm"] += [f"-Dpicomc.mainClass={original_main_class}"]
 
